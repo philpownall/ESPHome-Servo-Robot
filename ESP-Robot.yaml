@@ -1,0 +1,607 @@
+# This is the robot
+# it has an ultrasonic HC-SR04 distance sensor 
+# and 3x mg90 360 servos - metal gear 360-degree servo motors
+# 2x servos for wheel motors, one for a battery-keep-alive rotating thing
+# it also uses an ESP32 Expansion board to provide more power and more 5V pins
+# and an SSD1306 display
+# and a passive buzzer for sounds
+# and a green LED for a heartbeat
+
+substitutions:
+  robot_name: robot
+  # servo speeds
+  stop_speed: "0"
+  forward_speed: "0.08"
+  reverse_speed: "-0.12"
+  thing_speed: "0.10"
+  wiggle_delay: "0.5s"
+  op_delay: 2.2s
+
+  # ESP32 peripheral pin assignments
+  passive_buzzer: GPIO23
+  left_wheel_servo: GPIO19
+  right_wheel_servo: GPIO21
+  thing_servo: GPIO18
+  ultrasonic_trigger: GPIO32
+  ultrasonic_echo: GPIO35
+  led_green: GPIO4
+  display_sda: GPIO26
+  display_scl: GPIO25
+
+globals:
+  # an array of strings to store tunes
+  - id: tunes
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: '{"adams:d=4,o=5,b=160:8c,f,8a,f,8c,b4,2g,8f,e,8g,e,8e4,a4,2f,8c,f,8a,f,8c,b4,2g,8f,e,8c,d,8e,1f,8c,8d,8e,8f",
+                    "star_wars:d=16,o=5,b=100:4e,4e,4e,8c,p,g,4e,8c,p,g,4e,4p,4b,4b,4b,8c6,p,g,4d#,8c,p,g,4e",
+                    "mission_imp:d=16,o=6,b=95:32d,32d#,32d,32d#,32d,32d#,32d,32d#,32d,32d,32d#,32e,32f,32f#,32g,g,8p,g,8p,a#,p,c7,p,g,8p,g,8p,f,p,f#,p,g,8p,g",
+                    "bevhills:d=4,o=5,b=160:f#,8a.,8f#,16f#,8a#,8f#,8e,f#,8c.6,8f#,16f#,8d6,8c#6,8a,8f#,8c#6,8f#6,16f#,8e,16e,8c#,8g#,f#.",
+                    "siren:d=8,o=5,b=100:d,e,d,e,d,e,d,e,d,e,d,e,d,e,d,e,d,e,d,e,d,e,d,e",
+                    "scale_up:d=32,o=5,b=100:c,c#,d#,e,f#,g#,a#,b",
+                    "scale_down:d=32,o=5,b=100:b,a#,g#,f#,e,d#,c#,c",
+                    "two_short:d=4,o=5,b=100:16e6,16e6",
+                    "XFiles1:d=4,o=5,b=125:e,b,a,b,d6,2b.,1p,e,b,a,b,e6,2b.",
+                    "two_up:d=16,o=5,b=100:c,b",
+                    "fifth:d=4,o=6,b=180:8f5,8f5,8f5,1c_5,8p,8d_5,8d_5,8d_5,1c5",
+                    "beep:d=4,o=5,b=100:16e6",
+                    "raspberry:d=16,o=5,b=100:2e",
+                    "do_re_mi:d=16,o=5,b=100:4c,4d,4e,4f,4g,4a,4b,2c6",
+                    "three_down:d=16,o=5,b=100:d,d,c",
+                    "behappy:d=4,o=5,b=125:2c6,a,g,8a.,16d,e,8g.,16e,8d.,16c,8d.,16e,2d,2p,8g.,16e,8d.,16c,8d.,16e,2d,2p,32d,8d#,16d,8c.,16a4,2c,2p,8e.,16d,8e.,16d,8e.,16e,8p,g,p,16c,d,8d.,16c,d,c,8e.,16c,8p,d,8p,e,8c.,16c,2p,e,8c.,16c"}'
+
+  # an array of strings to store notes
+  - id: notes
+    type: std::vector<std::string>
+    restore_value: no
+    initial_value: '{"play_c:d=16,o=5,b=100:4c",
+                     "play_d:d=16,o=5,b=100:4d",
+                     "play_e:d=16,o=5,b=100:4e",
+                     "play_f:d=16,o=5,b=100:4f",
+                     "play_g:d=16,o=5,b=100:4g",
+                     "play_a:d=16,o=5,b=100:4a",
+                     "play_b:d=16,o=5,b=100:4b",
+                     "play_c6:d=16,o=6,b=100:4c"}'
+
+  # a constant environment factor for the wifi distance calculation
+  # And the measured WiFi RSSI at 1m from the router
+  - id: wifi_nfactor 
+    type: float
+    restore_value: no
+    initial_value: '3'
+
+  - id: wifi_rssi_1m
+    type: float
+    restore_value: no
+    initial_value: '-37'
+ 
+select:
+  # a select template to choose a tune and play it
+  - platform: template
+    name: "Tune"
+    id: tune
+    optimistic: true
+    options:
+      - "Adams Family"
+      - "Star Wars"
+      - "Mission Impossible"
+      - "Beverley Hills Cop"
+      - "Siren"
+      - "Scale Up"
+      - "Scale Down"
+      - "Two Short"
+      - "X Files"
+      - "Two Up"
+      - "Fifth Symphony"
+      - "Beep"
+      - "Raspberry"
+      - "Do Re Mi"
+      - "Three Down"
+      - "Be Happy"
+    initial_option: "Scale Up"
+    on_value:
+      then:
+        - rtttl.play: 
+            rtttl: !lambda 'return id(tunes)[i].c_str();'
+
+  # a select template to choose a note and play it
+  - platform: template
+    name: "Note"
+    id: note
+    optimistic: True
+    options:
+      - "C"
+      - "D"
+      - "E"
+      - "F"
+      - "G"
+      - "A"
+      - "B"
+      - "C6"
+    on_value:
+      then:
+        # - logger.log:
+        #     format: "on_value Chosen option: %s (index %d) song %s"
+        #     args: ["x.c_str()", "i", "id(notes)[i].c_str()"]
+        - rtttl.play: 
+            rtttl: !lambda 'return id(notes)[i].c_str();'
+
+script:
+  - id: do_wiggle
+    then:
+      - button.press: servos_left
+      - delay: $wiggle_delay
+      - button.press: servos_right
+      - delay: $wiggle_delay
+      - button.press: servos_stop
+
+esphome:
+  name: ${robot_name}
+  friendly_name: ${robot_name}
+  includes:
+    - wifi_icon.h
+  on_boot:
+    then:
+      - light.turn_on: blue_led
+      - light.turn_on: green_led
+      - switch.turn_on: antenna
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# Enable logging
+logger:
+#  level: error
+  level: warn
+
+# Enable startup debug info
+debug:
+
+# local web server
+web_server:
+  version: 2
+  local: true
+
+# Enable Home Assistant API
+api:
+
+ota:
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Optional manual IP
+  manual_ip:
+    static_ip: 192.168.0.105
+    gateway: 192.168.0.1
+    subnet: 255.255.255.0
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: ${robot_name}
+    password: !secret wifi_password
+
+captive_portal:
+
+light:
+  # Status LED shares the blue led between status and an addressable light
+  # light flashes until the node is booted up and connected to a serial monitor
+  - platform: status_led
+    name: Blue LED
+    id: blue_led
+    pin: GPIO2
+
+  # green led on output ledc_6 -> ${led_green}
+  - platform: binary
+    name: Green LED
+    id: green_led
+    output: ledc_6
+    internal: true # keep the LED internal so that it doesn't spam the HA log
+
+button:
+  # a shutdown and reboot button on the web page
+  - platform: shutdown
+    name: Shutdown
+
+  - platform: restart
+    name: Reboot
+
+  # play a tune
+  - platform: template
+    name: Play
+    id: tune_play
+    on_press:
+      - select.next:
+          id: tune
+
+  # do a wiggle
+  - platform: template
+    name: Wiggle
+    id: wiggle
+    on_press:
+      - script.execute: do_wiggle
+    
+  # Buttons for notes, so that you can play the same note multiple times
+  # play a C note
+  - platform: template
+    name: Note 1 C
+    id: note_1_c
+    on_press:
+      # - rtttl.play:
+      #     rtttl: !lambda 'return id(notes)[0].c_str();'
+      - select.set: 
+          id: note
+          option: C
+
+  # play a D note
+  - platform: template
+    name: Note 2 D
+    id: note_2_d
+    on_press:
+      - select.set:
+          id: note
+          option: D
+
+  # play a E note
+  - platform: template
+    name: Note 3 E
+    id: note_3_e
+    on_press:
+      - select.set:
+          id: note
+          option: E
+
+  # play a F note
+  - platform: template
+    name: Note 4 F
+    id: note_4_f
+    on_press:
+      - select.set:
+          id: note
+          option: F
+
+  # play a G note
+  - platform: template
+    name: Note 5 G
+    id: note_5_g
+    on_press:
+      - select.set:
+          id: note
+          option: G
+
+  # play a A note
+  - platform: template
+    name: Note 6 A
+    id: note_6_a
+    on_press:
+      - select.set:
+          id: note
+          option: A
+
+  # play a B note
+  - platform: template
+    name: Note 7 B
+    id: note_7_b
+    on_press:
+      - select.set:
+          id: note
+          option: B
+
+  # play a C6 note
+  - platform: template
+    name: Note 8 C6
+    id: note_8_c6
+    on_press:
+      - select.set:
+          id: note
+          option: C6
+
+  # Initiate a distance sensor read
+  - platform: template
+    name: Distance Measure 
+    on_press:
+      - component.update: distance
+      - logger.log:
+          format: "Distance Measure Button pressed %.2f "
+          args: [ 'id(distance).state' ]
+          level: warn
+  
+  # Initiate an WiFi RSSI distance sensor read
+  - platform: template
+    name: Distance Measure WiFi
+    on_press:
+      - component.update: wifi_rssi
+      - logger.log:
+          format: "WiFi Distance Measure Button pressed %.1f "
+          args: [ 'id(distance_wifi).state' ]
+          level: warn
+
+  # buttons for servo presets
+  - platform: template
+    name: Go Forward
+    id: servos_forward
+    icon: "mdi:arrow-up-bold"
+    on_press:
+      then:
+        # when moving forward, check for an obstacle first and only move if the way is clear
+        - component.update: distance
+        - if:
+            condition:
+              lambda: 'return id(distance).state > 0.3;'
+            then:
+              - servo.write:
+                  id: servo_1
+                  level: ${forward_speed}
+              - servo.write:
+                  id: servo_2
+                  level: ${reverse_speed}
+              # the motors will run continuously unless the following code is uncommented
+              # - delay: ${op_delay}
+              # - button.press: servos_stop
+              - button.press: note_1_c
+            else:
+              - button.press: note_3_e
+
+  - platform: template
+    name: Go Reverse
+    id: servos_reverse
+    icon: "mdi:arrow-down-bold"
+    on_press:
+        - servo.write:
+            id: servo_1
+            level: ${reverse_speed}
+        - servo.write:
+            id: servo_2
+            level: ${forward_speed}
+        # the motors will run continuously unless the following code is uncommented
+        # - delay: ${op_delay}
+        # - button.press: servos_stop
+        - button.press: note_2_d        
+
+  - platform: template
+    name: Go Stop
+    id: servos_stop
+    icon: "mdi:stop"
+    on_press:
+      then:
+        - servo.write:
+            id: servo_1
+            level: 0
+        - servo.write:
+            id: servo_2
+            level: 0
+
+  - platform: template
+    name: Go Right
+    id: servos_right
+    icon: "mdi:arrow-right-top-bold"
+    on_press:
+        - servo.write:
+            id: servo_1
+            level: ${forward_speed}
+        - servo.write:
+            id: servo_2
+            level: ${forward_speed}
+        # At 7% speed, 1s is about 90 degrees
+        # the motors will run continuously unless the following code is uncommented
+        # - delay: 0.48s
+        # - button.press: servos_stop
+        - button.press: note_4_f
+
+  - platform: template
+    name: Go Left
+    id: servos_left
+    icon: "mdi:arrow-left-top-bold"
+    on_press:
+        - servo.write:
+            id: servo_1
+            level: ${reverse_speed}
+        - servo.write:
+            id: servo_2
+            level: ${reverse_speed}
+        # the motors will run continuously unless the following code is uncommented
+        # - delay: 0.98s
+        # - button.press: servos_stop
+        - button.press: note_5_g
+
+switch:
+  # switch to toggle servo 3 antenna
+  - platform: template
+    name: Antenna
+    id: antenna
+    optimistic: true
+    internal: true
+    turn_on_action:
+      - servo.write:
+          id: servo_3
+          level: ${thing_speed}
+    turn_off_action:
+      - servo.write:
+          id: servo_3
+          level: 0.0
+
+# Passive buzzer with "+" on output ledc_4 -> pin ${passive_buzzer}
+rtttl:
+  output: ledc_4
+
+binary_sensor:
+  - platform: status
+    name: Status
+
+sensor:
+  # HC-SR04 Ultrasonic distance sensor
+  - platform: ultrasonic
+    trigger_pin: ${ultrasonic_trigger}
+    echo_pin: ${ultrasonic_echo}
+    name: "Distance"
+    id: distance
+    entity_category: "diagnostic"
+    update_interval: 2min
+    timeout: 6m
+    pulse_time: 40us
+    filters:
+      - filter_out: nan
+    on_value:
+      - logger.log:
+          format: "HC-SR04 Sensor updated. Distance %.2f "
+          args: [ 'id(distance).state' ]
+          level: warn
+      - if:
+          condition:
+            lambda: 'return id(distance).state < 0.5;'
+          then:
+            - script.execute: do_wiggle
+            - button.press: tune_play
+  
+  - platform: wifi_signal
+    name: WiFi RSSI
+    id: wifi_rssi
+    update_interval: 60s
+    entity_category: "diagnostic"
+
+  # the WiFi signal strength in %
+  - platform: copy 
+    source_id: wifi_rssi
+    name: "WiFi Signal Percent"
+    id: wifi_signal_pct
+    filters:
+      - lambda: return min(max(2 * (x + 100.0), 0.0), 100.0);
+    unit_of_measurement: "%"
+    entity_category: "diagnostic"
+    device_class: ""
+
+  # Calculate distance from router
+  - platform: copy
+    name: "Distance Wifi"
+    id: distance_wifi
+    source_id: wifi_rssi
+    entity_category: "diagnostic"
+    unit_of_measurement: "m"
+    accuracy_decimals: 1
+    filters:
+      - lambda: return pow(10, (( id(wifi_rssi_1m) - id(wifi_rssi).state ) / (10 * id(wifi_nfactor))));
+
+text_sensor:
+  - platform: wifi_info
+    # show the node IP address
+    ip_address:
+      name: IP Address
+
+output:
+    # Servo motor outputs
+    # Note that the servos do not show up in Home Assistant
+    # So we use button templates to control them
+  - platform: ledc
+    pin: ${left_wheel_servo}
+    id: ledc_0
+    channel: 0
+    frequency: 50 Hz
+
+  - platform: ledc
+    pin: ${right_wheel_servo}
+    id: ledc_1
+    channel: 1
+    frequency: 50 Hz
+
+  - platform: ledc
+    pin: ${thing_servo}
+    id: ledc_2
+    channel: 2
+    frequency: 50 Hz
+
+  # ledc PWM output for the Passive Buzzer
+  - platform: ledc
+    pin: ${passive_buzzer}
+    id: ledc_4
+    channel: 4
+
+  # ledc PWM output for the green led
+  - platform: ledc
+    pin: ${led_green}
+    id: ledc_6
+    channel: 6
+    frequency: "1000Hz"
+
+# Servo motor platform definitions
+servo:
+  - id: servo_1
+    output: ledc_0
+    auto_detach_time: 0s
+    transition_length: 2s
+
+  - id: servo_2
+    output: ledc_1
+    auto_detach_time: 0s
+    transition_length: 2s
+
+  - id: servo_3
+    output: ledc_2
+    auto_detach_time: 0s
+    transition_length: 2s
+
+# define an I2C bus for the SSD1306 display
+i2c:
+  - id: bus_b
+    sda: ${display_sda}
+    scl: ${display_scl}
+    scan: True
+    frequency: 400kHz
+
+font:
+  # some fonts for the display
+  - file: 'fonts/arial.ttf'
+    id: font1
+    size: 18
+
+  - file: 'fonts/materialdesignicons-webfont.ttf'
+    id: icons
+    size: 20
+    glyphs: [
+        "󰤮", # no-wifi
+        "󰤯", # low-wifi
+        "󰤟", # wifi-1
+        "󰤢", # wifi-2
+        "󰤥", # wifi-3
+        "󰤨", # wifi-4
+     ]
+
+display:
+  - platform: ssd1306_i2c
+    model: "SSD1306 128x64"
+    reset_pin: GPIO27 # an unused pin
+    address: 0x3C
+    id: my_display
+    flip_x: True
+    flip_y: True
+    pages:
+      - id: page1
+        lambda: |-
+          it.print(50, 0, id(icons), wifi_icon(id(wifi_signal_pct).state));
+          it.line(9, 45, 117, 45);
+      - id: page2
+        lambda: |-
+          it.print(50, 0, id(icons), wifi_icon(id(wifi_signal_pct).state));
+          it.circle(63, 0, 60);
+     # - id: page3
+      #   lambda: |-
+      #     it.printf(0, 20, id(font1), "D: %.2f W: %.1f ", id(distance).state, id(distance_wifi).state);
+
+interval:
+  # update the display page 
+  - interval: 23s
+    then:
+      - display.page.show_next: my_display
+      - component.update: my_display
+      # turn the antenna on and off
+      - switch.toggle: antenna
+      - delay: 20s
+      - switch.toggle: antenna
+
+  - interval: 3s
+    then:
+      - light.toggle: green_led
+      - delay: 1s
+      - light.toggle: green_led
