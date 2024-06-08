@@ -48,6 +48,7 @@ For a total bill-of-materials cost of less than $20 plus about $20 for a USB bat
 This recipe documents how to build an ESP32 module-based robot with control from an ESPHome web page or from a Home Assistant Dashboard.  With a separate ESPHome voice peripheral, voice control capability can be provided.  A 10,000 mAh USB battery pack will keep the robot alive for 5+ days, and it all fits inside the (slightly enlarged) 3D-printed Otto  robot chassis.
 
 ![Robot](image.png)
+![Otto Mate](Otto Mate.jpg)
 ![WebPage](image2.png)
 
 ### ESP32 Expansion Board
